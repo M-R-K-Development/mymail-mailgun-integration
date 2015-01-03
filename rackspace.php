@@ -71,7 +71,6 @@ class MyMailMailgun {
 			}
 
 			add_action('admin_init', array(&$this, 'settings_scripts_styles'));
-			add_action('MYMAIL_MAILGUN_cron', array(&$this, 'getquota'));
 
 		}
 		
@@ -130,7 +129,6 @@ class MyMailMailgun {
 		$mailobject->pre_send();
 		
 		if($track = mymail_option(MYMAIL_MAILGUN_ID.'_track')) $mailobject->mailer->addCustomHeader('X-MC-Track', $track);
-		if($subaccount = mymail_option(MYMAIL_MAILGUN_ID.'_subaccount')) $mailobject->mailer->addCustomHeader('X-MC-Subaccount', $subaccount);
 		
 	}
 
@@ -145,13 +143,6 @@ class MyMailMailgun {
 	 */
 	public function dosend($mailobject) {
 		
-		if (mymail_option(MYMAIL_MAILGUN_ID.'_api') == 'smtp') {
-
-			//use send from the main class
-			$mailobject->do_send();
-			
-			
-		} else {
 
 			$mailobject->mailer->PreSend();
 			$raw_message = $mailobject->mailer->GetSentMIMEMessage();
@@ -219,7 +210,6 @@ class MyMailMailgun {
 					}
 				}
 			}
-		}
 		
 	}
 
@@ -302,13 +292,13 @@ class MyMailMailgun {
 	}
 
 
-	public function get_call($endpoint, $bodyonly){
+	public function wpget_call($endpoint, $bodyonly){
 
-		$url = 'https://api.mailgun.net/v2/'+$endpoint;
+		$url = "https://api.mailgun.net/v2/".$endpoint;
 
 		$args = array(
 		    'headers' => array(
-		    'Authorization' => 'Basic ' . base64_encode( 'API:' .$options[MYMAIL_MAILGUN_ID.'_apikey'] )
+		    'Authorization' => 'Basic ' . base64_encode( 'API:' . mymail_option(MYMAIL_MAILGUN_ID.'_apikey') )
 		    )
 		);
 
@@ -324,10 +314,6 @@ class MyMailMailgun {
 		
 		$code = wp_remote_retrieve_response_code($response);
 		$body = json_decode(wp_remote_retrieve_body($response));
-		
-		if($code != 200){
-			return new WP_Error($body->name, $body->message);
-		} 
 		
 		if($bodyonly){
 			return $body;
@@ -391,50 +377,6 @@ class MyMailMailgun {
 
 
 	/**
-	 * getquota function.
-	 * 
-	 * returns the quota of the account or an WP_error if credentials are wrong
-	 * @access public
-	 * @param bool $save (default: true)
-	 * @param string $apikey (default: NULL)
-	 * @param string $subaccount (default: NULL)
-	 * @return void
-	 */
-	public function getquota($save = true, $apikey = NULL, $subaccount = NULL) {
-
-		$apikey = (!is_null($apikey)) ? $apikey : mymail_option(MYMAIL_MAILGUN_ID.'_apikey');
-		$subaccount = (!is_null($subaccount)) ? $subaccount : mymail_option(MYMAIL_MAILGUN_ID.'_subaccount', NULL);
-		
-		$response = $this->do_call('users/info', array('key' => $apikey), true);
-		
-		if (is_wp_error($response)) return $response;
-
-		$limits = array(
-			'daily' => $response->hourly_quota*24,
-			'hourly' => $response->hourly_quota,
-			'sent' => 0,
-			'sent_total' => $response->stats->all_time->sent,
-			'backlog' => $response->backlog,
-		);
-		
-		//if a subaccount is use change the sent value but keep the quota of the main account if it's less
-		if($subaccount){
-			$response = $this->do_call('subaccounts/info', array('key' => $apikey, 'id' => $subaccount), true);
-			if (is_wp_error($response)) return $response;
-			$limits['hourly'] = min($limits['hourly'], $response->hourly_quota);
-			$limits['sent'] = $response->sent_hourly;
-			$limits['daily'] = $response->hourly_quota*24;
-		}
-		
-		
-		if ($save) $this->update_limits($limits);
-		
-		return $limits;
-
-	}
-
-
-	/**
 	 * delivery_method function.
 	 * 
 	 * add the delivery method to the options
@@ -458,6 +400,7 @@ class MyMailMailgun {
 	public function deliverytab() {
 
 		$verified = mymail_option(MYMAIL_MAILGUN_ID.'_verified');
+		$domain = mymail_option(MYMAIL_MAILGUN_ID.'_domain');
 		
 	?>
 		<table class="form-table">
@@ -490,44 +433,29 @@ class MyMailMailgun {
 			<tr valign="top">
 				<th scope="row"><?php _e('Select Domain' , MYMAIL_MAILGUN_DOMAIN) ?></th>
 				<td>
-				<select name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_subaccount]">
-					<option value=""<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_subaccount'), 0); ?>><?php _e('none', MYMAIL_MAILGUN_DOMAIN); ?></option>
+				<select name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_domain]">
+					<option value=""<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_domain'), 0); ?>><?php _e('none', MYMAIL_MAILGUN_DOMAIN); ?></option>
 					<?php 
-							$domains= $this->get_domains();
-							echo $domains;
-							foreach($domains as $account){
-								echo '<option value="'.$account->id.'" '.selected(mymail_option(MYMAIL_MAILGUN_ID.'_subaccount'), $account->id, true).'>'.$account->name.($account->status != 'active' ? ' ('.$account->status.')' : '').'</option>';
+							$data= $this->get_domains();
+							print_r($data->body->items);
+							
+							foreach($data->body->items as $account){
+								echo '<option value="'.$account->name.'" '.selected(mymail_option(MYMAIL_MAILGUN_ID.'_domain'), $account->name, true).'>'.$account->name.($account->state != 'active' ? ' ('.$account->state.')' : '').'</option>';
 							}
+							
 					?>
 				</select>
-				<?php print_r($domains);?>
+				</td>
+			</tr>
+			<tr valign="top">
+				<th scope="row">&nbsp;</th> 
+				<td>
+				<img src="<?php echo MYMAIL_URI . 'assets/img/icons/'.($domain ? 'green' : 'red').'_2x.png'?>" width="16" height="16">
+					<?php echo ($verified) ? __('Your Domain Name is selected! - '.$domain, MYMAIL_MAILGUN_DOMAIN) : __('You need to select a domain name!', MYMAIL_MAILGUN_DOMAIN)?>
 				</td>
 			</tr>
 		</table>
 		<?php endif; ?>
-		<table class="form-table">
-			<tr valign="top">
-				<th scope="row"><?php _e('Track in mailgun' , MYMAIL_MAILGUN_DOMAIN) ?></th>
-				<td>
-				<select name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_track]">
-					<option value="0"<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_track'), 0); ?>><?php _e('Account defaults', MYMAIL_MAILGUN_DOMAIN); ?></option>
-					<option value="none"<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_track'), 'none'); ?>><?php _e('none', MYMAIL_MAILGUN_DOMAIN); ?></option>
-					<option value="opens"<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_track'), 'opens'); ?>><?php _e('opens', MYMAIL_MAILGUN_DOMAIN); ?></option>
-					<option value="clicks"<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_track'), 'clicks'); ?>><?php _e('clicks', MYMAIL_MAILGUN_DOMAIN); ?></option>
-					<option value="opens,clicks"<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_track'), 'opens,clicks'); ?>><?php _e('opens and clicks', MYMAIL_MAILGUN_DOMAIN); ?></option>
-				</select> <span class="description"><?php _e('Track opens and clicks in mailgun as well', MYMAIL_MAILGUN_DOMAIN); ?></span></td>
-			</tr>
-			<tr valign="top">
-				<th scope="row"><?php _e('Update Limits' , MYMAIL_MAILGUN_DOMAIN) ?></th>
-				<td><label><input type="checkbox" name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_autoupdate]" value="1" <?php checked(mymail_option( MYMAIL_MAILGUN_ID.'_autoupdate' ), true)?>> <?php _e('auto update send limits (recommended)', MYMAIL_MAILGUN_DOMAIN); ?> </label></td>
-			</tr>
-			<tr valign="top">
-				<th scope="row"><?php _e('max emails at once' , MYMAIL_MAILGUN_DOMAIN) ?></th>
-				<td><input type="text" name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_send_at_once]" value="<?php echo esc_attr(mymail_option(MYMAIL_MAILGUN_ID.'_send_at_once', 100)); ?>" class="small-text">
-				<span class="description"><?php _e('define the most highest value for auto calculated send value to prevent server timeouts', MYMAIL_MAILGUN_DOMAIN); ?></span>
-				</td>
-			</tr>
-		</table>
 		<input type="hidden" name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_backlog]" value="<?php echo mymail_option( MYMAIL_MAILGUN_ID.'_backlog', 0 ) ?>">
 		</div>
 
@@ -571,10 +499,12 @@ class MyMailMailgun {
 
 			if (($options[MYMAIL_MAILGUN_ID.'_apikey'])) {
 
-				$response = get_call('domains',false);
+				$response = $this->wpget_call('domains',false);
 
-				if($response->body->total_count > 0){
+				if($response->code=='200'){
 					$options[MYMAIL_MAILGUN_ID.'_verified'] = true;
+				}else{
+					$options[MYMAIL_MAILGUN_ID.'_verified'] = false;
 				}
 			}
 			if(isset($options[MYMAIL_MAILGUN_ID.'_autoupdate'])){
@@ -598,7 +528,7 @@ class MyMailMailgun {
 	public function get_domains() {
 
 		if(!($domains = get_transient('mymail_mailgun_domains'))){
-			$domains = $this->get_call('domains', false);
+			$domains = $this->wpget_call('domains', false);
 			if(!is_wp_error($domains)){
 				set_transient('mymail_mailgun_domains', $domains, 3600);
 			}else{
