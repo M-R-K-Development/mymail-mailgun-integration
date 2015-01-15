@@ -158,7 +158,8 @@ class MyMailMailgun {
 						'h:Reply-To'      => $mailobject->reply_to,
 						'html' => $mailobject->content,
 						'text' => $mailobject->plaintext,
-						'o:tracking' => 'yes'
+						'o:tracking' => 'yes',
+						'o:testmode' => 'yes'
                       );
 
 			if($track = mymail_option(MYMAIL_MAILGUN_ID.'_track')){
