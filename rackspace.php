@@ -201,72 +201,72 @@ class MyMailMailgun {
 	 */
 	public function check_bounces() {
 
-			if ( get_transient( 'mymail_check_bounces_lock' ) ) return false;
+		$mailer = $mailobject->mailer;
+		$mailgun = new \Mailgun\Mailgun(mymail_option(MYMAIL_MAILGUN_ID.'_apikey'));
+		$domain = mymail_option(MYMAIL_MAILGUN_ID.'_domain');
 
-			//check bounces only every five minutes
-			set_transient( 'mymail_check_bounces_lock', true, mymail_option('bounce_check', 5)*60 );
-
-			$subaccount = mymail_option(MYMAIL_MAILGUN_ID.'_subaccount', NULL);
-
-			$response = $this->do_call('rejects/list', array('subaccount' => $subaccount), true);
-
-			if(is_wp_error($response)){
-
-				$response->get_error_message();
-				//Stop if there was an error
-				return false;
-
-			}
-
-			if(!empty($response)){
-
-				//only the first 100
-				$count = 100;
-				foreach(array_slice($response, 0, $count) as $subscriberdata){
-
-					$subscriber = mymail('subscribers')->get_by_mail($subscriberdata->email);
-
-					//only if user exists
-					if($subscriber){
-
-						$reseted = false;
-						$campaigns = mymail('subscribers')->get_sent_campaigns($subscriber->ID);
-
-						foreach($campaigns as $i => $campaign){
-
-							//only campaign which have been started maximum a day ago or the last 10 campaigns
-							if($campaign->timestamp-strtotime($subscriberdata->created_at)+60*1440 < 0 || $i >= 10) break;
-
-							if(mymail('subscribers')->bounce($subscriber->ID, $campaign->campaign_id, $subscriberdata->reason == 'hard-bounce')){
-								$response = $this->do_call('rejects/delete', array(
-									'email' => $subscriberdata->email,
-									'subaccount' => $subaccount
-								), true);
-								$reseted = isset($response->deleted) && $response->deleted;
-							}
-
-						}
-
-						if(!$reseted){
-							$response = $this->do_call('rejects/delete', array(
-								'email' => $subscriberdata->email,
-								'subaccount' => $subaccount
-							), true);
-							$reseted = isset($response->deleted) && $response->deleted;
-						}
+		$limit = 100;
+		$skip = 0;
 
 
-					}else{
-						//remove user from the list
-						$response = $this->do_call('rejects/delete', array(
-							'email' => $subscriberdata->email,
-							'subaccount' => $subaccount
-						));
-						$count++;
-					}
+		try{
+
+		$response = $mailgun->get("$domain/bounces", array('limit' => $limit, 'skip' => $skip));
+		} catch(\Exception $e){
+
+			return false;
+		}
+
+		if($response->http_response_code == 200){
+			$this->_processHardBounces($response->http_response_body->items, $mailgun);
+			$total = $response->http_response_body->total_count;
+
+			$skip = $skip + $limit;
+			while ($skip < $total){
+
+			try{
+				$response = $mailgun->get("$domain/bounces", array('limit' => $limit, 'skip' => $skip));
+
+				if($response->http_response_code == 200){
+					$this->_processHardBounces($response->http_response_body->items, $mailgun);
 				}
+
+			} catch(\Exception $e){
+
+				return false;
 			}
 
+			}
+
+		}
+
+
+	}
+
+
+	/**
+	 * Process hard bounced subscibers.
+	 * Remove them from
+	 *
+	 * @param  [type] $bounces [description]
+	 *
+	 * @return [type]          [description]
+	 */
+	private function _processHardBounces($bounces, &$mailgun){
+		$domain = mymail_option(MYMAIL_MAILGUN_ID.'_domain');
+
+		foreach($bounces as $item){
+				$email = $item->address;
+
+				$subscriber = mymail('subscribers')->get_by_mail($email);
+
+				mymail('subscribers')->change_status($subscriber->ID, 'hardbounced', true);
+
+
+				if($subscriber){
+					$mailgun->delete("$domain/bounces/$email");
+				}
+		}
 	}
 
 
