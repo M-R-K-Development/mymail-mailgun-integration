@@ -1,0 +1,13 @@
+{
+    "name": "mrkdevelopment/mymail-mailgun-integration",
+    "description": "Integrating mymail to send email via mailgun",
+    "authors": [
+        {
+            "name": "Ketan Shah",
+            "email": "ketan.shah@gmail.com"
+        }
+    ],
+    "require": {
+        "mailgun/mailgun-php": "~1.7"
+    }
+}

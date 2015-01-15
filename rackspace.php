@@ -14,15 +14,17 @@ License: GPLv2 or later
 define('MYMAIL_MAILGUN_VERSION', '0.1.0');
 define('MYMAIL_MAILGUN_REQUIRED_VERSION', '2.0');
 define('MYMAIL_MAILGUN_ID', 'mailgun');
-define('MYMAIL_MAILGUN_DOMAIN', 'mymail-mailgun');
+define('MYMAIL_MAILGUN_DOMAIN', 'parkescs.nsw.edu.au');
 define('MYMAIL_MAILGUN_DIR', WP_PLUGIN_DIR.'/mymail-mailgun-integration');
 define('MYMAIL_MAILGUN_URI', plugins_url().'/mymail-mailgun-integration');
 define('MYMAIL_MAILGUN_SLUG', 'mymail-mailgun-integration/rackspace.php');
 
+require_once "vendor/autoload.php";
+
 
 class MyMailMailgun {
 
-	
+
 	public function __construct(){
 
 		$this->plugin_path = plugin_dir_path( __FILE__ );
@@ -30,15 +32,15 @@ class MyMailMailgun {
 
 		register_activation_hook( __FILE__, array(&$this, 'activate') );
 		register_deactivation_hook( __FILE__, array(&$this, 'deactivate') );
-		
+
 		load_plugin_textdomain( 'mymail-mailgun', false, dirname( plugin_basename( __FILE__ ) ) . '/lang' );
-		
+
 		add_action( 'init', array( &$this, 'init'), 1 );
 	}
 
 	/**
 	 * init function.
-	 * 
+	 *
 	 * init the plugin
 	 *
 	 * @access public
@@ -50,12 +52,12 @@ class MyMailMailgun {
 		if (!defined('MYMAIL_VERSION') || version_compare(MYMAIL_MAILGUN_REQUIRED_VERSION, MYMAIL_VERSION, '>')) {
 
 			add_action('admin_notices', array(&$this, 'notice'));
-			
+
 		} else {
-		
+
 			add_filter('mymail_delivery_methods', array(&$this, 'delivery_method'));
 			add_action('mymail_deliverymethod_tab_mailgun', array(&$this, 'deliverytab'));
-			
+
 			add_filter('mymail_verify_options', array(&$this, 'verify_options'));
 
 			if (mymail_option('deliverymethod') == MYMAIL_MAILGUN_ID) {
@@ -73,13 +75,13 @@ class MyMailMailgun {
 			add_action('admin_init', array(&$this, 'settings_scripts_styles'));
 
 		}
-		
+
 	}
 
 
 	/**
 	 * initsend function.
-	 * 
+	 *
 	 * uses mymail_initsend hook to set initial settings
 	 *
 	 * @access public
@@ -89,18 +91,18 @@ class MyMailMailgun {
 	public function initsend($mailobject) {
 
 		$mailobject->dkim = false;
-		
+
 		(!defined('MYMAIL_DOING_CRON') && mymail_option(MYMAIL_MAILGUN_ID.'_backlog'))
 			? mymail_notice(sprintf(__('You have %s mails in your Backlog! %s', MYMAIL_MAILGUN_DOMAIN), '<strong>'.mymail_option(MYMAIL_MAILGUN_ID.'_backlog').'</strong>', '<a href="http://eepurl.com/rvxGP" class="external">'.__('What is this?', MYMAIL_MAILGUN_DOMAIN).'</a>'), 'error', true, 'mailgun_backlog')
 			: mymail_remove_notice('mailgun_backlog');
 
-		
+
 	}
 
 
 	/**
 	 * subscriber_errors function.
-	 * 
+	 *
 	 * adds a subscriber error
 	 * @access public
 	 * @param mixed $mailobject
@@ -114,109 +116,85 @@ class MyMailMailgun {
 
 	/**
 	 * presend function.
-	 * 
+	 *
 	 * uses the mymail_presend hook to apply setttings before each mail
 	 * @access public
 	 * @param mixed $mailobject
 	 * @return void
 	 */
-	 
-	 
+
+
 	public function presend($mailobject) {
-		
+
 		//use pre_send from the main class
 		//need the raw email body to send so we use the same option
 		$mailobject->pre_send();
-		
-		if($track = mymail_option(MYMAIL_MAILGUN_ID.'_track')) $mailobject->mailer->addCustomHeader('X-MC-Track', $track);
-		
+
 	}
 
 
 	/**
 	 * dosend function.
-	 * 
+	 *
 	 * uses the ymail_dosend hook and triggers the send
 	 * @access public
 	 * @param mixed $mailobject
 	 * @return void
 	 */
 	public function dosend($mailobject) {
-		
-
 			$mailobject->mailer->PreSend();
-			$raw_message = $mailobject->mailer->GetSentMIMEMessage();
-			
-			$timeout = 15;
-			
-			$response = $this->do_call('messages/send-raw', array(
-				'raw_message' => $raw_message,
-				'from_email' => $mailobject->from,
-				'from_name' => $mailobject->from_name,
-				'to' => $mailobject->to,
-				'async' => defined('MYMAIL_DOING_CRON'),
-				'ip_pool' => null,
-				'return_path_domain' => null,
-			), true, $timeout);
 
-			if(is_wp_error($response)){
-			
-				$mailobject->set_error($response->get_error_message());
-				$mailobject->sent = false;
-				
-			} else {
-				
-				$response = $response[0];
-				if($response->status == 'sent' || $response->status == 'queued'){
-					$mailobject->sent = true;
-				}else{
-					if(in_array($response->reject_reason, array('soft-bounce'))){
-					
-						//softbounced already so
-						$hash = $mailobject->headers['X-MyMail'];
-						$camp = $mailobject->headers['X-MyMail-Campaign'];
-							
-						if($camp && $hash){
-							
-							$subscriber = mymail('subscribers')->get_by_hash($hash);
-						
-							$deleteresponse = $this->do_call('rejects/delete', array(
-								'email' => $subscriber->email,
-								'subaccount' => mymail_option(MYMAIL_MAILGUN_ID.'_subaccount')
-							), true);
-						
-							if(isset($deleteresponse->deleted) && $deleteresponse->deleted){
-							
-								$this->dosend($mailobject);
-						
-							}else{
-							
-								$mailobject->sent = true;
-								
-							}
-							
-							
-						}else{
-						
-							$mailobject->set_error('['.$response->status.'] '.$response->reject_reason);
-							$mailobject->sent = false;
-							
-						}
-							
-						
-					}else{
-						$mailobject->set_error('['.$response->status.'] '.$response->reject_reason);
-						$mailobject->sent = false;
-					}
+
+			$mailer = $mailobject->mailer;
+
+			$mailgun = new \Mailgun\Mailgun(mymail_option(MYMAIL_MAILGUN_ID.'_apikey'));
+
+			$domain = mymail_option(MYMAIL_MAILGUN_ID.'_domain');
+
+			$message = array(
+						'o:native-send'   => 'yes',
+						'from' => $mailobject->from,
+						'subject' => $mailobject->subject,
+						'h:Reply-To'      => $mailobject->reply_to,
+						'html' => $mailobject->content,
+						'text' => $mailobject->plaintext,
+						'o:tracking' => 'yes'
+                      );
+
+			if($track = mymail_option(MYMAIL_MAILGUN_ID.'_track')){
+				$message['h:X-Mailgun-Tag'] = $track;
+			}
+
+			$batchSize = 1000;
+
+			$chunks = array_chunk($mailobject->to, $batchSize);
+
+	        foreach ($chunks as $i => $chunk) {
+                $batchMessage = $mailgun->BatchMessage($domain, false);
+                $batchMessage->setMessage($message);
+
+                foreach ($chunk as $recipientEmail) {
+                    $batchMessage->addToRecipient($recipientEmail);
+                }
+
+				try {
+	                $response = $batchMessage->finalize();
+				} catch(\Exception $e){
+					$mailobject->set_error($e->getMessage());
+					$mailobject->sent = false;
+
+					return;
 				}
 			}
-		
+
+
+			$mailobject->sent = true;
 	}
 
 
 	/**
 	 * check_bounces function.
-	 * 
+	 *
 	 * checks for bounces and reset them if needed
 	 * @access public
 	 * @return void
@@ -224,28 +202,28 @@ class MyMailMailgun {
 	public function check_bounces() {
 
 			if ( get_transient( 'mymail_check_bounces_lock' ) ) return false;
-			
+
 			//check bounces only every five minutes
 			set_transient( 'mymail_check_bounces_lock', true, mymail_option('bounce_check', 5)*60 );
 
 			$subaccount = mymail_option(MYMAIL_MAILGUN_ID.'_subaccount', NULL);
-			
+
 			$response = $this->do_call('rejects/list', array('subaccount' => $subaccount), true);
 
 			if(is_wp_error($response)){
-			
+
 				$response->get_error_message();
 				//Stop if there was an error
 				return false;
-				
+
 			}
-			
+
 			if(!empty($response)){
-			
+
 				//only the first 100
 				$count = 100;
 				foreach(array_slice($response, 0, $count) as $subscriberdata){
-				
+
 					$subscriber = mymail('subscribers')->get_by_mail($subscriberdata->email);
 
 					//only if user exists
@@ -277,7 +255,7 @@ class MyMailMailgun {
 							$reseted = isset($response->deleted) && $response->deleted;
 						}
 
-						
+
 					}else{
 						//remove user from the list
 						$response = $this->do_call('rejects/delete', array(
@@ -288,7 +266,7 @@ class MyMailMailgun {
 					}
 				}
 			}
-			
+
 	}
 
 
@@ -303,22 +281,22 @@ class MyMailMailgun {
 		);
 
 		$response = wp_remote_get( $url, $args );
-		
+
 		$body = wp_remote_retrieve_body( $response );
 
 		if(is_wp_error($response)){
-		
+
 			return $response;
 
 		}
-		
+
 		$code = wp_remote_retrieve_response_code($response);
 		$body = json_decode(wp_remote_retrieve_body($response));
-		
+
 		if($bodyonly){
 			return $body;
 		}
-		
+
 		return (object) array(
 			'code' => $code,
 			'headers' => wp_remote_retrieve_headers($response),
@@ -329,7 +307,7 @@ class MyMailMailgun {
 
 	/**
 	 * do_call function.
-	 * 
+	 *
 	 * makes a post request to the mailgun endpoint and returns the result
 	 * @access public
 	 * @param mixed $path
@@ -339,46 +317,46 @@ class MyMailMailgun {
 	 * @return void
 	 */
 	public function do_call($path, $data = array(), $bodyonly = false, $timeout = 5) {
-		
+
 		$url = 'https://api.mailgun.net/v2/'.$path.'.json';
 		if(is_bool($data)){
 			$bodyonly = $data;
 			$data = array();
 		}
 		$data = wp_parse_args($data, array('key' => mymail_option(MYMAIL_MAILGUN_ID.'_apikey')));
-		
+
 		$response = wp_remote_post( $url, array(
 			'timeout' => $timeout,
 			'sslverify' => false,
 			'body' => $data
 		));
-		
+
 		if(is_wp_error($response)){
-		
+
 			return $response;
 
 		}
-		
+
 		$code = wp_remote_retrieve_response_code($response);
 		$body = json_decode(wp_remote_retrieve_body($response));
-		
+
 		if($code != 200) return new WP_Error($body->name, $body->message);
-		
+
 		if($bodyonly) return $body;
-		
+
 		return (object) array(
 			'code' => $code,
 			'headers' => wp_remote_retrieve_headers($response),
 			'body' => $body,
 		);
-		
-		
+
+
 	}
 
 
 	/**
 	 * delivery_method function.
-	 * 
+	 *
 	 * add the delivery method to the options
 	 * @access public
 	 * @param mixed $delivery_methods
@@ -392,7 +370,7 @@ class MyMailMailgun {
 
 	/**
 	 * deliverytab function.
-	 * 
+	 *
 	 * the content of the tab for the options
 	 * @access public
 	 * @return void
@@ -401,7 +379,7 @@ class MyMailMailgun {
 
 		$verified = mymail_option(MYMAIL_MAILGUN_ID.'_verified');
 		$domain = mymail_option(MYMAIL_MAILGUN_ID.'_domain');
-		
+
 	?>
 		<table class="form-table">
 
@@ -418,7 +396,7 @@ class MyMailMailgun {
 				<td><input type="text" name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_apikey]" value="<?php echo esc_attr(mymail_option(MYMAIL_MAILGUN_ID.'_apikey')); ?>" class="regular-text" placeholder="xxxxxxxxxxxxxxxxxxxxxx"></td>
 			</tr>
 			<tr valign="top">
-				<th scope="row">&nbsp;</th> 
+				<th scope="row">&nbsp;</th>
 				<td>
 					<img src="<?php echo MYMAIL_URI . 'assets/img/icons/'.($verified ? 'green' : 'red').'_2x.png'?>" width="16" height="16">
 					<?php echo ($verified) ? __('Your API Key is ok!', MYMAIL_MAILGUN_DOMAIN) : __('Your credentials are WRONG!', MYMAIL_MAILGUN_DOMAIN)?>
@@ -435,20 +413,20 @@ class MyMailMailgun {
 				<td>
 				<select name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_domain]">
 					<option value=""<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_domain'), 0); ?>><?php _e('none', MYMAIL_MAILGUN_DOMAIN); ?></option>
-					<?php 
+					<?php
 							$data= $this->get_domains();
 							print_r($data->body->items);
-							
+
 							foreach($data->body->items as $account){
 								echo '<option value="'.$account->name.'" '.selected(mymail_option(MYMAIL_MAILGUN_ID.'_domain'), $account->name, true).'>'.$account->name.($account->state != 'active' ? ' ('.$account->state.')' : '').'</option>';
 							}
-							
+
 					?>
 				</select>
 				</td>
 			</tr>
 			<tr valign="top">
-				<th scope="row">&nbsp;</th> 
+				<th scope="row">&nbsp;</th>
 				<td>
 				<img src="<?php echo MYMAIL_URI . 'assets/img/icons/'.($domain ? 'green' : 'red').'_2x.png'?>" width="16" height="16">
 					<?php echo ($verified) ? __('Your Domain Name is selected! - '.$domain, MYMAIL_MAILGUN_DOMAIN) : __('You need to select a domain name!', MYMAIL_MAILGUN_DOMAIN)?>
@@ -466,7 +444,7 @@ class MyMailMailgun {
 
 	/**
 	 * section_tab_bounce function.
-	 * 
+	 *
 	 * displays a note on the bounce tab (MyMail >= 1.6.2)
 	 * @access public
 	 * @param mixed $options
@@ -482,7 +460,7 @@ class MyMailMailgun {
 
 	/**
 	 * verify_options function.
-	 * 
+	 *
 	 * some verification if options are saved
 	 * @access public
 	 * @param mixed $options
@@ -513,14 +491,14 @@ class MyMailMailgun {
 				}
 			}
 		}
-		
+
 		return $options;
 	}
 
 
 	/**
 	 * get_domains function.
-	 * 
+	 *
 	 * get a list of domains
 	 * @access public
 	 * @return void
@@ -535,15 +513,15 @@ class MyMailMailgun {
 				$domains = array();
 			}
 		}
-		
+
 		return $domains;
-		
+
 	}
 
 
 	/**
 	 * update_limits function.
-	 * 
+	 *
 	 * Update the limits
 	 * @access public
 	 * @return void
@@ -559,7 +537,7 @@ class MyMailMailgun {
 		($limits['backlog'])
 			? mymail_notice(sprintf(__('You have %s mails in your Backlog! %s', MYMAIL_MAILGUN_DOMAIN), '<strong>'.$limits['backlog'].'</strong>', '<a href="http://eepurl.com/rvxGP" class="external">'.__('What is this?', MYMAIL_MAILGUN_DOMAIN).'</a>'), 'error', true, 'mailgun_backlog')
 			: mymail_remove_notice('mailgun_backlog');
-		
+
 		if(!get_transient('_mymail_send_period_timeout')){
 			set_transient('_mymail_send_period_timeout', true, $options['send_period']*3600);
 		}
@@ -570,7 +548,7 @@ class MyMailMailgun {
 
 	/**
 	 * notice function.
-	 * 
+	 *
 	 * Notice if MyMail is not available
 	 * @access public
 	 * @return void
@@ -588,19 +566,19 @@ class MyMailMailgun {
 
 	/**
 	 * settings_scripts_styles function.
-	 * 
+	 *
 	 * some scripts are needed
 	 * @access public
 	 * @return void
 	 */
 	public function settings_scripts_styles() {
 		global $pagenow;
-		
+
 		if($pagenow == 'options-general.php' && isset($_REQUEST['page']) && $_REQUEST['page'] == 'newsletter-settings'){
 
 			wp_register_script('mymail-mailgun-settings-script', MYMAIL_MAILGUN_URI . '/js/script.js', array('jquery'), MYMAIL_MAILGUN_VERSION);
 			wp_enqueue_script('mymail-mailgun-settings-script');
-			
+
 		}
 
 	}
@@ -608,7 +586,7 @@ class MyMailMailgun {
 
 	/**
 	 * activation function.
-	 * 
+	 *
 	 * activate function
 	 * @access public
 	 * @return void
@@ -621,13 +599,13 @@ class MyMailMailgun {
 				wp_schedule_event( time(), 'hourly', 'MYMAIL_MAILGUN_cron');
 			}
 		}
-		
+
 	}
 
 
 	/**
 	 * deactivation function.
-	 * 
+	 *
 	 * deactivate function
 	 * @access public
 	 * @return void
@@ -639,12 +617,12 @@ class MyMailMailgun {
 				mymail_update_option('deliverymethod', 'simple');
 				mymail_notice(sprintf(__('Change the delivery method on the %s!', MYMAIL_MAILGUN_DOMAIN), '<a href="options-general.php?page=newsletter-settings&mymail_remove_notice=mymail_delivery_method#delivery">Settings Page</a>'), '', false, 'delivery_method');
 			}
-			
+
 			if ( $timestamp = wp_next_scheduled( 'MYMAIL_MAILGUN_cron' ) ) {
 				wp_unschedule_event($timestamp, 'MYMAIL_MAILGUN_cron' );
 			}
 		}
-		
+
 	}
 
 }
