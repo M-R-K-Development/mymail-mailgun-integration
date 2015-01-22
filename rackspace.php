@@ -348,8 +348,9 @@ protected $domain;
 	 */
 	public function getLastExecutedStatsTimestamp(){
 		global $wpdb;
+		$allowedTypes = array(2,5,6,7); //types fetched from mailgun
 		// we are storing send using mymail so
-		$sql = "select timestamp from {$wpdb->prefix}mymail_actions where type != 1 order by timestamp desc limit 1";
+		$sql = "select timestamp from {$wpdb->prefix}mymail_actions where type IN (" .implode(',', $allowedTypes) .") order by timestamp desc limit 1";
 		$result = $wpdb->get_results( $sql );
 		$this->dump('r',$result);
 		return empty($result) ? 1 : $result[0]->timestamp;

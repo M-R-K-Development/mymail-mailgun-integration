@@ -32,3 +32,5 @@ Forked from Mandrill addon
 
 This Plugin requires [MyMail Newsletter Plugin for WordPress](http://rxa.li/mymail?utm_source=Mandrill+integration+for+MyMail)
 
+This Plugin gets 'opened' and 'failed' stats from Mailgun and integrates into mymail stats. Stats are fired using last timestamps value received from mailgun in wp_mymail_actions table (from opened, and failed events at the moment);
+
