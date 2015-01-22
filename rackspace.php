@@ -24,8 +24,12 @@ require_once "vendor/autoload.php";
 
 class MyMailMailgun {
 
+protected $mailgun;
+protected $domain;
 
 	public function __construct(){
+
+
 
 		$this->plugin_path = plugin_dir_path( __FILE__ );
 		$this->plugin_url = plugin_dir_url( __FILE__ );
@@ -36,6 +40,7 @@ class MyMailMailgun {
 		load_plugin_textdomain( 'mymail-mailgun', false, dirname( plugin_basename( __FILE__ ) ) . '/lang' );
 
 		add_action( 'init', array( &$this, 'init'), 1 );
+
 	}
 
 	/**
@@ -73,6 +78,8 @@ class MyMailMailgun {
 			}
 
 			add_action('admin_init', array(&$this, 'settings_scripts_styles'));
+
+			add_action('mymail_cron_worker', array( &$this, 'getStats'), 2);
 
 		}
 
@@ -151,6 +158,10 @@ class MyMailMailgun {
 
 			$domain = mymail_option(MYMAIL_MAILGUN_ID.'_domain');
 
+			$campaignId = $mailobject->headers['X-MyMail-Campaign'];
+
+			$subscriber = mymail('subscribers')->get_by_mail($mailobject->to[0]);
+
 			$message = array(
 						'o:native-send'   => 'yes',
 						'from' => $mailobject->from,
@@ -158,9 +169,8 @@ class MyMailMailgun {
 						'h:Reply-To'      => $mailobject->reply_to,
 						'html' => $mailobject->content,
 						'text' => $mailobject->plaintext,
-                        'o:tracking' => 'no',
-                        'o:tracking-clicks' => 'no',
-                        'o:tracking-opens' => 'no'
+                        'o:tracking' => 'yes',
+                        'o:tag' => array("campaign-" . $campaignId, 'subscriber-' . $subscriber->ID, 'mymail'),
                       );
 
 			if($track = mymail_option(MYMAIL_MAILGUN_ID.'_track')){
@@ -170,6 +180,7 @@ class MyMailMailgun {
 			$batchSize = 1000;
 
 			$chunks = array_chunk($mailobject->to, $batchSize);
+
 
 	        foreach ($chunks as $i => $chunk) {
                 $batchMessage = $mailgun->BatchMessage($domain, false);
@@ -191,6 +202,181 @@ class MyMailMailgun {
 
 
 			$mailobject->sent = true;
+	}
+
+
+	/**
+	 * Get stats from mailgun by looking for tags.
+	 *
+	 * We use 3 tags per message.
+	 * One related to campaign ID, other subscriber ID and last a generic 'mymail'
+	 *
+	 * Last executed timestamp is stored in mymail config/options
+	 *
+	 * @return [type] [description]
+	 */
+	public function getStats(){
+		$this->initMailgun();
+
+		$beginTimestamp = $this->getLastExecutedStatsTimestamp() + 1;
+
+		$hasItems = 100;
+		$next = "";
+
+		$types = array('opened', 'failed');
+
+		$eventTypes = implode(' OR ', $types);
+
+
+		while($hasItems == 100){
+			$endTimestamp = current_time('timestamp', 0); //UTC
+
+			list($hasItems, $next) = $this->fetchAndProcessStats($beginTimestamp, $eventTypes, $next);
+		}
+
+
+	}
+
+
+
+	/**
+	 * [fetchAndProcessStats description]
+	 *
+	 * @param  [type] $begin [description]
+	 * @param  [type] $end   [description]
+	 *
+	 * @return [type]        [description]
+	 */
+	public function fetchAndProcessStats($begin, $eventTypes, $next){
+		global $wpdb;
+
+		if(empty($next)){
+			$uri = $this->domain . "/events";
+			$args = array('begin' => $begin, 'ascending' => 'yes', 'event' => $eventTypes , 'tags' => 'mymail' );
+		} else {
+
+			$uri = $next;
+			$args = array();
+		}
+
+
+
+		$response = $this->mailgun->get( $uri, $args );
+		$this->dump('response', $response);
+
+		foreach($response->http_response_body->items as $item){
+			$data = array('timestamp' => (int) $item->timestamp, 'count' => 1);
+			list($data['campaign_id'], $data['subscriber_id']) = $this->pullSubscriberDataFromTags($item);
+
+			$type = null;
+
+			switch ($item->event) {
+				case 'failed':
+					$type = 7;
+					if($item->reason == 'bounce'){
+						if($item->severity == 'permanent'){
+							$type = 6;
+						} else {
+							$type = 5;
+						}
+					}
+					break;
+
+				case 'opened':
+					$type = 2;
+					break;
+
+				// TODO: add other events as per needs.
+
+				default:
+					# should not come here.
+					break;
+			}
+
+			$data['type'] = $type;
+
+
+			$sql = "INSERT INTO {$wpdb->prefix}mymail_actions (".implode(', ', array_keys($data)).")";
+			$sql .= " VALUES ('".implode("','", array_values($data))."')";
+			try{
+
+			$wpdb->query($sql);
+		} catch(\Exception $e){
+
+		}
+
+
+
+		}
+
+
+
+		return array(count($response->http_response_body->items), $response->http_response_body->paging->next);
+	}
+
+
+
+	/**
+	 * fetch the subscriber data from tags.
+	 *
+	 * @param  [type] $item [description]
+	 *
+	 * @return [type]       [description]
+	 */
+	private function pullSubscriberDataFromTags($item){
+	 	$subscriberId = null;
+	 	$campaignId = null;
+
+	 	foreach($item->tags as $tag){
+	 		if(strpos($tag, 'campaign-') !== false){
+	 			$campaignId = (int) str_replace('campaign-', '', $tag);
+	 		}
+	 		if(strpos($tag, 'subscriber-') !== false){
+	 			$subscriberId = (int) str_replace('subscriber-', '', $tag);
+	 		}
+	 	}
+
+
+	 	return array($campaignId, $subscriberId);
+	}
+
+
+	/**
+	 * [getLastExecutedStatsTimestamp description]
+	 *
+	 * @return [type] [description]
+	 */
+	public function getLastExecutedStatsTimestamp(){
+		global $wpdb;
+		// we are storing send using mymail so
+		$sql = "select timestamp from {$wpdb->prefix}mymail_actions where type != 1 order by timestamp desc limit 1";
+		$result = $wpdb->get_results( $sql );
+		$this->dump('r',$result);
+		return empty($result) ? 1 : $result[0]->timestamp;
+
+	}
+
+
+	public function dump($lable, $value){
+		// echo "<pre>";
+		// echo "<b>$lable</b>:";
+		// var_dump($value);
+
+		// echo "</pre>";
+	}
+
+
+
+	/**
+	 * Initialises the mailgun objects.
+	 *
+	 * @return [type] [description]
+	 */
+	public function initMailgun(){
+		if(!$mailgun){
+			$this->mailgun = new \Mailgun\Mailgun(mymail_option(MYMAIL_MAILGUN_ID.'_apikey'));
+			$this->domain = mymail_option(MYMAIL_MAILGUN_ID.'_domain');
+		}
 	}
 
 
@@ -474,7 +660,7 @@ class MyMailMailgun {
 			wp_unschedule_event($timestamp, 'mymail_mailgun_cron' );
 		}
 
-		//only if deleiver method is mailgun
+		//only if delivery method is mailgun
 		if ($options['deliverymethod'] == MYMAIL_MAILGUN_ID) {
 
 			if (($options[MYMAIL_MAILGUN_ID.'_apikey'])) {
@@ -492,6 +678,8 @@ class MyMailMailgun {
 					wp_schedule_event( time()+3600, 'hourly', 'mymail_mailgun_cron');
 				}
 			}
+
+
 		}
 
 		return $options;
