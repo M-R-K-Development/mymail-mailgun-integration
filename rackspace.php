@@ -14,7 +14,7 @@ License: GPLv2 or later
 define('MYMAIL_MAILGUN_VERSION', '0.1.0');
 define('MYMAIL_MAILGUN_REQUIRED_VERSION', '2.0');
 define('MYMAIL_MAILGUN_ID', 'mailgun');
-define('MYMAIL_MAILGUN_DOMAIN', 'parkescs.nsw.edu.au');
+define('MYMAIL_MAILGUN_DOMAIN', '');
 define('MYMAIL_MAILGUN_DIR', WP_PLUGIN_DIR.'/mymail-mailgun-integration');
 define('MYMAIL_MAILGUN_URI', plugins_url().'/mymail-mailgun-integration');
 define('MYMAIL_MAILGUN_SLUG', 'mymail-mailgun-integration/rackspace.php');
@@ -603,11 +603,16 @@ protected $domain;
 				<select name="mymail_options[<?php echo MYMAIL_MAILGUN_ID ?>_domain]">
 					<option value=""<?php selected(mymail_option(MYMAIL_MAILGUN_ID.'_domain'), 0); ?>><?php _e('none', MYMAIL_MAILGUN_DOMAIN); ?></option>
 					<?php
-							$data= $this->get_domains();
-							print_r($data->body->items);
+							$domains = $this->get_domains();
 
-							foreach($data->body->items as $account){
-								echo '<option value="'.$account->name.'" '.selected(mymail_option(MYMAIL_MAILGUN_ID.'_domain'), $account->name, true).'>'.$account->name.($account->state != 'active' ? ' ('.$account->state.')' : '').'</option>';
+							print_r($domains);
+
+							if(is_array($domains)) {
+								foreach($domains as $account){
+									echo '<option value="'.$account->name.'" '.selected(mymail_option(MYMAIL_MAILGUN_ID.'_domain'), $account->name, true).'>'.$account->name.($account->state != 'active' ? ' ('.$account->state.')' : '').'</option>';
+								}
+							} else {
+								echo  sprintf('<div class="error inline"><p><strong>%s</strong></p></div>', $domains);
 							}
 
 					?>
@@ -661,18 +666,29 @@ protected $domain;
 			wp_unschedule_event($timestamp, 'mymail_mailgun_cron' );
 		}
 
+
+
 		//only if delivery method is mailgun
 		if ($options['deliverymethod'] == MYMAIL_MAILGUN_ID) {
 
 			if (($options[MYMAIL_MAILGUN_ID.'_apikey'])) {
+				$this->mailgun = new \Mailgun\Mailgun($options[MYMAIL_MAILGUN_ID.'_apikey']);
 
-				$response = $this->wpget_call('domains',false);
 
-				if($response->code=='200'){
-					$options[MYMAIL_MAILGUN_ID.'_verified'] = true;
-				}else{
-					$options[MYMAIL_MAILGUN_ID.'_verified'] = false;
+				try {
+					$response = $this->mailgun->get('domains');
+					if($response->http_response_code == 200){
+						$verified = true;
+					} else {
+						$verified = false;
+					}
+				} catch (Exception $e) {
+					$verified = false;
 				}
+
+
+				$options[MYMAIL_MAILGUN_ID.'_verified'] = $verified;
+
 			}
 			if(isset($options[MYMAIL_MAILGUN_ID.'_autoupdate'])){
 				if ( !wp_next_scheduled( 'mymail_mailgun_cron' ) ) {
@@ -696,14 +712,23 @@ protected $domain;
 	 */
 	public function get_domains() {
 
-		if(!($domains = get_transient('mymail_mailgun_domains'))){
-			$domains = $this->wpget_call('domains', false);
-			if(!is_wp_error($domains)){
-				set_transient('mymail_mailgun_domains', $domains, 3600);
-			}else{
-				$domains = array();
+		$domains = get_transient('mymail_mailgun_domains');
+
+		if(!$domains){
+			$domains = array();
+			$this->initMailgun();
+			try {
+				$response = $this->mailgun->get('domains');
+			} catch (Exception $e) {
+				return $e->getMessage();
+			}
+			if($response->http_response_code == 200) {
+				$domains = $response->http_response_body->items;
 			}
 		}
+
+
+		set_transient('mymail_mailgun_domains', $domains, 3600);
 
 		return $domains;
 
