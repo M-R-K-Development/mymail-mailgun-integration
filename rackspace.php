@@ -282,7 +282,12 @@ class MyMailMailgun {
 
 
 
-		$response = $this->mailgun->get( $uri, $args );
+		try {
+			$response = $this->mailgun->get( $uri, $args );
+		} catch (\Exception $e) {
+			return array(0, null);
+		}
+
 		$this->dump('response', $response);
 
 		foreach($response->http_response_body->items as $item){
