@@ -1,6 +1,6 @@
 === MyMail Mailgun Integration ===
 Contributors: mrkdevelopment
-Tags: mandrill, mymail, delivery, deliverymethod, newsletter, email, revaxarts, mymailesp
+Tags: mailgun, mymail, delivery, deliverymethod, newsletter, email, revaxarts, mymailesp
 Requires at least: 3.3
 Tested up to: 4.1
 Stable tag: 0.3.2
@@ -32,5 +32,4 @@ Forked from Mandrill addon
 
 This Plugin requires [MyMail Newsletter Plugin for WordPress](http://rxa.li/mymail?utm_source=Mandrill+integration+for+MyMail)
 
-This Plugin gets 'opened' and 'failed' stats from Mailgun and integrates into mymail stats. Stats are fired using last timestamps value received from mailgun in wp_mymail_actions table (from opened, and failed events at the moment);
-
+This Plugin gets 'opened' and 'failed' stats from Mailgun and integrates into mymail stats. Stats are fired using last timestamps value received from mailgun in wp_mymail_actions table (from opened, and failed events at the moment)
